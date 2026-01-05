@@ -85,7 +85,7 @@
 
 本项目**支持 Docker 和Vercel平台** 部署。
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/mtvpls/MoonTVPlus)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/zcs19960929/MoonTVPlus)
 
 **一键部署到zeabur**
 
