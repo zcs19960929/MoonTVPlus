@@ -27,7 +27,7 @@ function getDoubanImageProxyConfig(): {
 }
 
 /**
- * 处理图片 URL，如果设置了图片代理则使用代理
+ * 处理图片 URL，统一使用服务器代理
  */
 export function processImageUrl(originalUrl: string): string {
   if (!originalUrl) return originalUrl;
@@ -64,6 +64,21 @@ export function processImageUrl(originalUrl: string): string {
     default:
       return originalUrl;
   }
+}
+
+/**
+ * 处理视频 URL，如果���置了代理则使用代理（与图片使用相同的代理配置）
+ */
+export function processVideoUrl(originalUrl: string): string {
+  if (!originalUrl) return originalUrl;
+
+  // 仅处理豆瓣视频代理
+  if (!originalUrl.includes('doubanio.com')) {
+    return originalUrl;
+  }
+
+  // 统一使用服务器代理
+  return `/api/video-proxy?url=${encodeURIComponent(originalUrl)}`;
 }
 
 /**
