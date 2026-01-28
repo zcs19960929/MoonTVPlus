@@ -1,11 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, no-console */
 
+import parseTorrentName from 'parse-torrent-name';
+
+import type { AdminConfig } from '@/lib/admin.types';
 import { getConfig } from '@/lib/config';
 import { generateFolderKey } from '@/lib/crypto';
 import { db } from '@/lib/db';
 import { OpenListClient } from '@/lib/openlist.client';
 import {
-  getCachedMetaInfo,
   invalidateMetaInfoCache,
   MetaInfo,
   setCachedMetaInfo,
@@ -18,13 +20,70 @@ import {
   updateScanTaskProgress,
 } from '@/lib/scan-task';
 import { parseSeasonFromTitle } from '@/lib/season-parser';
-import { searchTMDB, getTVSeasonDetails } from '@/lib/tmdb.search';
-import parseTorrentName from 'parse-torrent-name';
+import { getTVSeasonDetails,searchTMDB } from '@/lib/tmdb.search';
+
+/**
+ * 获取根目录列表（兼容新旧配置）
+ */
+function getRootPaths(openListConfig: AdminConfig['OpenListConfig']): string[] {
+  if (!openListConfig) {
+    return ['/'];
+  }
+
+  // 如果有新字段 RootPaths，直接使用
+  if (openListConfig.RootPaths && openListConfig.RootPaths.length > 0) {
+    return openListConfig.RootPaths;
+  }
+
+  // 如果只tPath，返回单元素数组
+  if (openListConfig.RootPath) {
+    return [openListConfig.RootPath];
+  }
+
+  // 默认值
+  return ['/'];
+}
+
+/**
+ * 迁移旧版单根目录配置到多根目录
+ */
+async function migrateToMultiRoot(openListConfig: NonNullable<AdminConfig['OpenListConfig']>): Promise<void> {
+  const oldRootPath = openListConfig.RootPath!;
+
+  console.log('[OpenList Migration] 检测到旧版配置，开始迁移...');
+
+  // 1. 读取现有 metainfo
+  const metainfoContent = await db.getGlobalValue('video.metainfo');
+  if (metainfoContent) {
+    const metaInfo: MetaInfo = JSON.parse(metainfoContent);
+
+    // 2. 迁移 folderName：加上原根路径前缀
+    for (const [_key, info] of Object.entries(metaInfo.folders)) {
+      const oldFolderName = info.folderName;
+      const newFolderName = `${oldRootPath}${oldRootPath.endsWith('/') ? '' : '/'}${oldFolderName}`;
+      info.folderName = newFolderName;
+
+      console.log(`[Migration] ${oldFolderName} -> ${newFolderName}`);
+    }
+
+    // 3. 保存迁移后的 metainfo
+    await db.setGlobalValue('video.metainfo', JSON.stringify(metaInfo));
+    console.log('[OpenList Migration] MetaInfo 迁移完成');
+  }
+
+  // 4. 更新配置：RootPath -> RootPaths
+  const config = await getConfig();
+  config.OpenListConfig!.RootPaths = [oldRootPath];
+  delete config.OpenListConfig!.RootPath;
+  await db.saveAdminConfig(config);
+
+  console.log('[OpenList Migration] 配置迁移完成');
+}
 
 /**
  * 启动 OpenList 刷新任务
  */
-export async function startOpenListRefresh(clearMetaInfo: boolean = false): Promise<{ taskId: string }> {
+export async function startOpenListRefresh(clearMetaInfo = false): Promise<{ taskId: string }> {
   const config = await getConfig();
   const openListConfig = config.OpenListConfig;
 
@@ -40,20 +99,33 @@ export async function startOpenListRefresh(clearMetaInfo: boolean = false): Prom
 
   const tmdbApiKey = config.SiteConfig.TMDBApiKey;
   const tmdbProxy = config.SiteConfig.TMDBProxy;
+  const tmdbReverseProxy = config.SiteConfig.TMDBReverseProxy;
 
   if (!tmdbApiKey) {
     throw new Error('TMDB API Key 未配置');
   }
 
+  // 检测是否需要迁移
+  if (openListConfig.RootPath && !openListConfig.RootPaths) {
+    await migrateToMultiRoot(openListConfig);
+    // 重新加载配置
+    const newConfig = await getConfig();
+    Object.assign(openListConfig, newConfig.OpenListConfig);
+  }
+
   cleanupOldTasks();
   const taskId = createScanTask();
 
-  performScan(
+  const rootPaths = getRootPaths(openListConfig);
+
+  // 顺序扫描多个根目录
+  performMultiRootScan(
     taskId,
     openListConfig.URL,
-    openListConfig.RootPath || '/',
+    rootPaths,
     tmdbApiKey,
     tmdbProxy,
+    tmdbReverseProxy,
     openListConfig.Username,
     openListConfig.Password,
     clearMetaInfo,
@@ -67,6 +139,45 @@ export async function startOpenListRefresh(clearMetaInfo: boolean = false): Prom
 }
 
 /**
+ * 扫描多个根目录
+ */
+async function performMultiRootScan(
+  taskId: string,
+  url: string,
+  rootPaths: string[],
+  tmdbApiKey: string,
+  tmdbProxy: string | undefined,
+  tmdbReverseProxy: string | undefined,
+  username: string,
+  password: string,
+  clearMetaInfo: boolean,
+  scanMode: 'torrent' | 'name' | 'hybrid'
+): Promise<void> {
+  for (let i = 0; i < rootPaths.length; i++) {
+    const rootPath = rootPaths[i];
+    console.log(`[OpenList Refresh] 扫描根目录 (${i + 1}/${rootPaths.length}): ${rootPath}`);
+
+    try {
+      await performScan(
+        taskId,
+        url,
+        rootPath,
+        tmdbApiKey,
+        tmdbProxy,
+        tmdbReverseProxy,
+        username,
+        password,
+        clearMetaInfo && i === 0, // 只在第一个根目录时清除
+        scanMode
+      );
+    } catch (error) {
+      console.error(`[OpenList Refresh] 根目录 ${rootPath} 扫描失败:`, error);
+      // 继续扫描其他根目录
+    }
+  }
+}
+
+/**
  * 执行扫描任务
  */
 async function performScan(
@@ -75,6 +186,7 @@ async function performScan(
   rootPath: string,
   tmdbApiKey: string,
   tmdbProxy?: string,
+  tmdbReverseProxy?: string,
   username?: string,
   password?: string,
   clearMetaInfo?: boolean,
@@ -112,7 +224,7 @@ async function performScan(
       }
     }
 
-    invalidateMetaInfoCache(rootPath);
+    invalidateMetaInfoCache();
 
     const folders: any[] = [];
     let currentPage = 1;
@@ -155,12 +267,15 @@ async function performScan(
 
       updateScanTaskProgress(taskId, i + 1, folders.length, folder.name);
 
-      if (!clearMetaInfo && folderNameToKey.has(folder.name)) {
+      // folderName 存储完整路径（包含根目录）
+      const fullFolderPath = `${rootPath}${rootPath.endsWith('/') ? '' : '/'}${folder.name}`;
+
+      if (!clearMetaInfo && folderNameToKey.has(fullFolderPath)) {
         existingCount++;
         continue;
       }
 
-      const folderKey = generateFolderKey(folder.name, existingKeys);
+      const folderKey = generateFolderKey(fullFolderPath, existingKeys);
       existingKeys.add(folderKey);
 
       try {
@@ -178,7 +293,7 @@ async function performScan(
           console.log(`[OpenList Refresh] 种子库模式 - 文件夹: ${folder.name}`);
           console.log(`[OpenList Refresh] 解析结果 - 标题: ${searchQuery}, 季度: ${seasonNumber}, 年份: ${year}`);
 
-          searchResult = await searchTMDB(tmdbApiKey, searchQuery, tmdbProxy, year || undefined);
+          searchResult = await searchTMDB(tmdbApiKey, searchQuery, tmdbProxy, year || undefined, tmdbReverseProxy);
         }
 
         if (scanMode === 'name' || (scanMode === 'hybrid' && (!searchResult || searchResult.code !== 200 || !searchResult.result))) {
@@ -190,14 +305,14 @@ async function performScan(
           console.log(`[OpenList Refresh] 名字匹配模式 - 文件夹: ${folder.name}`);
           console.log(`[OpenList Refresh] 清理后标题: ${searchQuery}, 季度: ${seasonNumber}, 年份: ${year}`);
 
-          searchResult = await searchTMDB(tmdbApiKey, searchQuery, tmdbProxy, year || undefined);
+          searchResult = await searchTMDB(tmdbApiKey, searchQuery, tmdbProxy, year || undefined, tmdbReverseProxy);
         }
 
         if (searchResult.code === 200 && searchResult.result) {
           const result = searchResult.result;
 
           const folderInfo: any = {
-            folderName: folder.name,
+            folderName: fullFolderPath,
             tmdb_id: result.id,
             title: result.title || result.name || folder.name,
             poster_path: result.poster_path,
@@ -215,7 +330,8 @@ async function performScan(
                 tmdbApiKey,
                 result.id,
                 seasonNumber,
-                tmdbProxy
+                tmdbProxy,
+                tmdbReverseProxy
               );
 
               if (seasonDetails.code === 200 && seasonDetails.season) {
@@ -249,7 +365,7 @@ async function performScan(
           newCount++;
         } else {
           metaInfo.folders[folderKey] = {
-            folderName: folder.name,
+            folderName: fullFolderPath,
             tmdb_id: 0,
             title: folder.name,
             poster_path: null,
@@ -267,7 +383,7 @@ async function performScan(
       } catch (error) {
         console.error(`[OpenList Refresh] 处理文件夹失败: ${folder.name}`, error);
         metaInfo.folders[folderKey] = {
-          folderName: folder.name,
+          folderName: fullFolderPath,
           tmdb_id: 0,
           title: folder.name,
           poster_path: null,
@@ -287,8 +403,8 @@ async function performScan(
     const metainfoContent = JSON.stringify(metaInfo);
     await db.setGlobalValue('video.metainfo', metainfoContent);
 
-    invalidateMetaInfoCache(rootPath);
-    setCachedMetaInfo(rootPath, metaInfo);
+    invalidateMetaInfoCache();
+    setCachedMetaInfo(metaInfo);
 
     const config = await getConfig();
     config.OpenListConfig!.LastRefreshTime = Date.now();

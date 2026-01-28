@@ -1,7 +1,7 @@
 'use client';
 
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getEpisodes, searchAnime } from '@/lib/danmaku/api';
 import type {
@@ -238,6 +238,12 @@ export default function DanmakuPanel({
             <p className='text-xs text-gray-600 dark:text-gray-400'>
               {currentSelection.episodeTitle}
             </p>
+            {currentSelection.danmakuCount !== undefined && (
+              <p className='mt-1 text-xs text-gray-500 dark:text-gray-500'>
+                弹幕数量: {currentSelection.danmakuCount}
+                {currentSelection.danmakuOriginalCount && ` (原始 ${currentSelection.danmakuOriginalCount} 条)`}
+              </p>
+            )}
           </div>
         )}
 
