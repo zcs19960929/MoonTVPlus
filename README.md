@@ -115,7 +115,7 @@ Cloudflare Workers 提供免费的边缘计算服务，通过 GitHub Actions 可
 - 点击 "Create Token"，选择 "Edit Cloudflare Workers" 模板
 - 或使用自定义 Token，需要以下权限：
   - Account - Cloudflare Workers Scripts - Edit
-  - Account - Cloudflare Workers KV Storage - Edit
+  - Account - D1 - Edit（仅在使用 D1 数据库时需要）
 - 创建后复制生成的 API Token
 - 在 Dashboard 首页右侧可以看到你的 Account ID
 
@@ -339,6 +339,7 @@ dockge/komodo 等 docker compose UI 也有自动更新功能
 | USERNAME                                 | 站长账号                                                     | 任意字符串                  | 无默认，必填字段                                             |
 | PASSWORD                                 | 站长密码                                                     | 任意字符串                  | 无默认，必填字段                                             |
 | CRON_PASSWORD                            | 定时任务 API 访问密码（用于保护 /api/cron 端点）             | 任意字符串                  | mtvpls                                                       |
+| CRON_USER_BATCH_SIZE                     | 定时任务用户批处理大小（控制并发处理的用户数量，影响播放记录和收藏更新任务的并发性能） | 正整数                      | 3                                                            |
 | SITE_BASE                                | 站点 url                                                     | 形如 https://example.com    | 空                                                           |
 | NEXT_PUBLIC_SITE_NAME                    | 站点名称                                                     | 任意字符串                  | MoonTV                                                       |
 | ANNOUNCEMENT                             | 站点公告                                                     | 任意字符串                  | 本网站仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。 |
