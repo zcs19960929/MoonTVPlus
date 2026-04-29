@@ -31,7 +31,23 @@ function DetailSkeleton() {
   );
 }
 
-async function openBookFile(sourceId: string, bookId: string, format?: 'epub' | 'pdf', download = false, href?: string) {
+function parseDownloadFilename(disposition: string | null) {
+  if (!disposition) return '';
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch {}
+  }
+  const plainMatch = disposition.match(/filename="?([^";]+)"?/i);
+  return plainMatch?.[1] || '';
+}
+
+function sanitizeFilename(name: string) {
+  return name.replace(/[\/:*?"<>|]/g, '_').trim();
+}
+
+async function openBookFile(sourceId: string, bookId: string, format?: 'epub' | 'pdf', download = false, href?: string, title?: string) {
   const response = await fetch('/api/books/file', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -48,9 +64,13 @@ async function openBookFile(sourceId: string, bookId: string, format?: 'epub' | 
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   if (download) {
+    const headerFilename = parseDownloadFilename(response.headers.get('content-disposition'));
+    const fallbackBaseName = sanitizeFilename(title || bookId || 'book') || 'book';
+    const extension = format === 'pdf' ? 'pdf' : 'epub';
+    const finalFilename = headerFilename || `${fallbackBaseName}.${extension}`;
     const link = document.createElement('a');
     link.href = url;
-    link.download = '';
+    link.download = finalFilename;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -155,7 +175,7 @@ export default function BookDetailPage() {
           <div className='flex flex-wrap gap-3'>
             {readable ? <Link href={buildBookReadPath(detail.sourceId, detail.id)} onClick={() => cacheBookDetail(detail)} className='rounded-2xl bg-sky-600 px-4 py-2 text-sm text-white'>在线阅读</Link> : null}
             <button onClick={toggleShelf} className='rounded-2xl border border-gray-200 px-4 py-2 text-sm dark:border-gray-700'>{shelf[`${detail.sourceId}+${detail.id}`] ? '移出书架' : '加入书架'}</button>
-            {readable ? <button onClick={async () => { try { setFileBusy('download'); await openBookFile(detail.sourceId, detail.id, readableFormat, true, readable?.href); } catch (err) { setError((err as Error).message || '下载文件失败'); } finally { setFileBusy(''); } }} disabled={fileBusy !== ''} className='rounded-2xl border border-gray-200 px-4 py-2 text-sm dark:border-gray-700'>{fileBusy === 'download' ? '下载中...' : '下载文件'}</button> : null}
+            {readable ? <button onClick={async () => { try { setFileBusy('download'); await openBookFile(detail.sourceId, detail.id, readableFormat, true, readable?.href, detail.title); } catch (err) { setError((err as Error).message || '下载文件失败'); } finally { setFileBusy(''); } }} disabled={fileBusy !== ''} className='rounded-2xl border border-gray-200 px-4 py-2 text-sm dark:border-gray-700'>{fileBusy === 'download' ? '下载中...' : '下载文件'}</button> : null}
           </div>
         </div>
       </section>

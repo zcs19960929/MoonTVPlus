@@ -73,7 +73,9 @@ async function proxyFile(request: NextRequest, sourceId: string, href: string) {
   const acceptRanges = response.headers.get('accept-ranges');
   const contentRange = response.headers.get('content-range');
   const disposition = response.headers.get('content-disposition');
-  if (contentType) outHeaders.set('Content-Type', contentType);
+  const normalizedHref = href.toLowerCase();
+  const resolvedContentType = contentType || (normalizedHref.endsWith('.pdf') ? 'application/pdf' : normalizedHref.endsWith('.epub') ? 'application/epub+zip' : '');
+  if (resolvedContentType) outHeaders.set('Content-Type', resolvedContentType);
   if (contentLength) outHeaders.set('Content-Length', contentLength);
   if (acceptRanges) outHeaders.set('Accept-Ranges', acceptRanges);
   if (contentRange) outHeaders.set('Content-Range', contentRange);
